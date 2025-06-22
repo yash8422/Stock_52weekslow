@@ -1,36 +1,56 @@
 import pandas as pd
 import numpy as np
 
-def analyze_high_low(df):
-    """Core analysis logic for breakout and range-bound stocks."""
-    # Clean data
-    df = df.replace('-', np.nan)
-    numeric_cols = ['Adjusted_52_Week_High', 'Adjusted_52_Week_Low']
-    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+def analyze_high_low(df, high_col='52_Week_High', low_col='52_Week_Low'):
+    """
+    Analyze 52-week high/low stock data
+    
+    Args:
+        df (pd.DataFrame): Input dataframe with stock data
+        high_col (str): Column name for 52-week high
+        low_col (str): Column name for 52-week low
+    
+    Returns:
+        dict: Dictionary containing analysis results with keys:
+              - 'summary': Summary statistics
+              - 'near_lows': Stocks near 52-week lows
+              - 'full_data': Full analysis dataframe
+    """
+    # Validate columns exist
+    missing_cols = [col for col in [high_col, low_col] if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+    
+    # Create a copy to avoid modifying original
+    df_clean = df.copy()
+    
+    # Clean data - replace common missing value indicators
+    df_clean = df_clean.replace(['-', 'NA', 'N/A', ''], np.nan)
+    
+    # Convert to numeric
+    df_clean[high_col] = pd.to_numeric(df_clean[high_col], errors='coerce')
+    df_clean[low_col] = pd.to_numeric(df_clean[low_col], errors='coerce')
     
     # Calculate metrics
-    df['Price_Range_Pct'] = (
-        (df['Adjusted_52_Week_High'] - df['Adjusted_52_Week_Low']) / 
-        df['Adjusted_52_Week_Low']
-    ) * 100
-    df['Current_To_High_Pct'] = (
-        (df['Adjusted_52_Week_High'] - df['Adjusted_52_Week_Low']) / 
-        df['Adjusted_52_Week_High']
-    ) * 100
-
-    # Breakout candidates (within 5% of high, min 20% annual range)
-    breakout = df[
-        (df['Current_To_High_Pct'] <= 5) & 
-        (df['Price_Range_Pct'] >= 20)
-    ].sort_values('Current_To_High_Pct')
-
-    # Range-bound stocks (low volatility)
-    range_bound = df[
-        (df['Price_Range_Pct'] <= 15)
-    ].sort_values('Price_Range_Pct')
-
+    df_clean['Current_Price'] = pd.to_numeric(df_clean.get('Current_Price', df_clean.get('Price', np.nan)), errors='coerce')
+    df_clean['Price_Range_Pct'] = (df_clean[high_col] - df_clean[low_col]) / df_clean[low_col] * 100
+    df_clean['Current_vs_Low_Pct'] = (df_clean['Current_Price'] - df_clean[low_col]) / df_clean[low_col] * 100
+    df_clean['Current_vs_High_Pct'] = (df_clean['Current_Price'] - df_clean[high_col]) / df_clean[high_col] * 100
+    
+    # Identify stocks near lows (within 5% of 52-week low)
+    near_lows = df_clean[df_clean['Current_vs_Low_Pct'] <= 5].sort_values('Current_vs_Low_Pct')
+    
+    # Create summary statistics
+    summary = {
+        'Total Stocks': len(df_clean),
+        'Stocks Near Lows': len(near_lows),
+        'Avg Price Range (%)': df_clean['Price_Range_Pct'].mean(),
+        'Median Current vs Low (%)': df_clean['Current_vs_Low_Pct'].median(),
+        'Stocks >50% Below High': len(df_clean[df_clean['Current_vs_High_Pct'] < -50])
+    }
+    
     return {
-        'breakout': breakout,
-        'range_bound': range_bound,
-        'all_data': df
+        'summary': pd.DataFrame.from_dict(summary, orient='index', columns=['Value']),
+        'near_lows': near_lows,
+        'full_data': df_clean
     }
